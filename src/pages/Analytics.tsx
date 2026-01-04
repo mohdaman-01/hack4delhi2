@@ -1,7 +1,27 @@
 import { BarChart3, TrendingUp, Cloud, Droplets, MapPin, Calendar } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 
 const Analytics = () => {
+  // Rainfall data for the last 7 days
+  const rainfallData = [
+    { day: "Mon", rainfall: 12 },
+    { day: "Tue", rainfall: 25 },
+    { day: "Wed", rainfall: 45 },
+    { day: "Thu", rainfall: 38 },
+    { day: "Fri", rainfall: 52 },
+    { day: "Sat", rainfall: 41 },
+    { day: "Sun", rainfall: 35 },
+  ];
+
+  // Hotspot distribution by zone
+  const zoneData = [
+    { name: "Central Delhi", value: 15, color: "#3b82f6" },
+    { name: "South Delhi", value: 12, color: "#8b5cf6" },
+    { name: "North Delhi", value: 8, color: "#06b6d4" },
+    { name: "East Delhi", value: 7, color: "#10b981" },
+    { name: "West Delhi", value: 5, color: "#f59e0b" },
+  ];
   return (
     <div className="space-y-6">
       <div>
@@ -80,14 +100,22 @@ const Analytics = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-64 bg-gradient-to-br from-info/5 to-primary/5 rounded-xl flex items-center justify-center">
-              <div className="text-center">
-                <BarChart3 className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  Integrate with Chart.js or Recharts
-                </p>
-              </div>
-            </div>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={rainfallData}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <XAxis dataKey="day" className="text-xs" />
+                <YAxis className="text-xs" label={{ value: 'mm', angle: -90, position: 'insideLeft' }} />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: 'hsl(var(--background))', 
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: '8px'
+                  }}
+                  formatter={(value) => [`${value} mm`, 'Rainfall']}
+                />
+                <Bar dataKey="rainfall" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
 
@@ -99,14 +127,32 @@ const Analytics = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-64 bg-gradient-to-br from-primary/5 to-info/5 rounded-xl flex items-center justify-center">
-              <div className="text-center">
-                <BarChart3 className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  Pie chart showing distribution
-                </p>
-              </div>
-            </div>
+            <ResponsiveContainer width="100%" height={250}>
+              <PieChart>
+                <Pie
+                  data={zoneData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {zoneData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: 'hsl(var(--background))', 
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: '8px'
+                  }}
+                />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
