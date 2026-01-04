@@ -2,7 +2,10 @@ import { MapPin, Droplets, AlertTriangle, Navigation, Search, ZoomIn, ZoomOut, M
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+
+// Access global Leaflet object
+declare const L: any;
 
 interface Hotspot {
   id: number;
@@ -19,12 +22,11 @@ const HotspotMap = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSeverity, setSelectedSeverity] = useState<string>("all");
   const [selectedHotspot, setSelectedHotspot] = useState<Hotspot | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
   const mapRef = useRef<HTMLDivElement>(null);
-  
+  const mapInstanceRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+
   const hotspots: Hotspot[] = [
     {
       id: 1,
@@ -88,18 +90,6 @@ const HotspotMap = () => {
     },
   ];
 
-  // Convert lat/lng to SVG coordinates
-  const latLngToXY = (lat: number, lng: number) => {
-    const mapWidth = 800;
-    const mapHeight = 600;
-    
-    // Simple mercator-like projection centered on Delhi
-    const x = ((lng - 77.0) * 40) + mapWidth / 2;
-    const y = ((28.8 - lat) * 40) + mapHeight / 2;
-    
-    return { x, y };
-  };
-
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case 'critical': return 'text-destructive bg-destructive/10 border-destructive/20';
@@ -120,43 +110,105 @@ const HotspotMap = () => {
     }
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsDragging(true);
-    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) {
-      setPan({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y,
-      });
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  const handleZoomIn = () => {
-    setZoom(prev => Math.min(prev + 0.2, 3));
-  };
-
-  const handleZoomOut = () => {
-    setZoom(prev => Math.max(prev - 0.2, 0.5));
-  };
-
-  const handleResetView = () => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  };
-
   const filteredHotspots = hotspots.filter(hotspot => {
     const matchesSearch = hotspot.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         hotspot.ward.toLowerCase().includes(searchQuery.toLowerCase());
+      hotspot.ward.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesSeverity = selectedSeverity === 'all' || hotspot.severity === selectedSeverity;
     return matchesSearch && matchesSeverity;
   });
+
+  // Initialize Map
+  useEffect(() => {
+    if (!mapRef.current || mapInstanceRef.current) return;
+
+    try {
+      // Initialize map centered on Delhi
+      const map = L.map(mapRef.current).setView([28.6139, 77.2090], 12);
+
+      // Add a nice basemap (CartoDB Voyager is clean and modern)
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 20
+      }).addTo(map);
+
+      mapInstanceRef.current = map;
+    } catch (error) {
+      console.error("Error initializing map:", error);
+    }
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
+
+  // Update Markers
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+
+    // Clear existing markers
+    markersRef.current.forEach(marker => marker.remove());
+    markersRef.current = [];
+
+    filteredHotspots.forEach(hotspot => {
+      const color = getMarkerColor(hotspot.severity);
+
+      // Create a pulsating effect for critical hotspots
+      const isCritical = hotspot.severity === 'critical';
+
+      const marker = L.circleMarker([hotspot.coordinates.lat, hotspot.coordinates.lng], {
+        radius: isCritical ? 12 : 8,
+        fillColor: color,
+        color: '#ffffff',
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.8,
+        className: isCritical ? 'animate-pulse' : ''
+      });
+
+      marker.addTo(mapInstanceRef.current);
+
+      // Add popup
+      const popupContent = `
+        <div class="p-1 min-w-[150px]">
+          <h3 class="font-bold text-sm mb-1">${hotspot.location}</h3>
+          <p class="text-xs text-gray-500 mb-2">${hotspot.ward}</p>
+          <div class="flex items-center justify-between">
+            <span class="text-xs px-2 py-0.5 rounded text-white" style="background-color: ${color}">
+              ${hotspot.severity.toUpperCase()}
+            </span>
+            <span class="text-xs font-semibold">${hotspot.waterLevel}% WL</span>
+          </div>
+        </div>
+      `;
+
+      marker.bindPopup(popupContent);
+
+      marker.on('click', () => {
+        setSelectedHotspot(hotspot);
+        // Optionally center map on click
+        // mapInstanceRef.current.setView(marker.getLatLng(), 14);
+      });
+
+      markersRef.current.push(marker);
+    });
+  }, [filteredHotspots]);
+
+  // Handle Zoom controls
+  const handleZoomIn = () => {
+    mapInstanceRef.current?.zoomIn();
+  };
+
+  const handleZoomOut = () => {
+    mapInstanceRef.current?.zoomOut();
+  };
+
+  const handleResetView = () => {
+    mapInstanceRef.current?.setView([28.6139, 77.2090], 12);
+  };
 
   return (
     <div className="space-y-6">
@@ -227,205 +279,90 @@ const HotspotMap = () => {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
-          <div 
+        <CardContent className="p-0 relative">
+          {/* Map Container */}
+          <div
             ref={mapRef}
-            className="relative h-[600px] bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 overflow-hidden cursor-move"
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-          >
-            {/* Map SVG */}
-            <svg 
-              className="absolute inset-0 w-full h-full"
-              style={{
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                transition: isDragging ? 'none' : 'transform 0.3s ease-out',
-              }}
-            >
-              {/* Grid lines */}
-              <defs>
-                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor" strokeWidth="0.5" className="text-slate-300 dark:text-slate-700" opacity="0.3"/>
-                </pattern>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#grid)" />
-              
-              {/* Delhi boundary (simplified) */}
-              <ellipse 
-                cx="400" 
-                cy="300" 
-                rx="200" 
-                ry="180" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                className="text-primary/30"
-                strokeDasharray="5,5"
-              />
-              
-              {/* Major roads/connections */}
-              <g className="text-slate-400 dark:text-slate-600" opacity="0.4">
-                <line x1="300" y1="200" x2="500" y2="400" stroke="currentColor" strokeWidth="2" />
-                <line x1="250" y1="300" x2="550" y2="300" stroke="currentColor" strokeWidth="2" />
-                <line x1="400" y1="150" x2="400" y2="450" stroke="currentColor" strokeWidth="2" />
-              </g>
+            className="h-[600px] w-full z-0"
+            style={{ isolation: 'isolate' }}
+          />
 
-              {/* Hotspot markers */}
-              {filteredHotspots.map((hotspot) => {
-                const { x, y } = latLngToXY(hotspot.coordinates.lat, hotspot.coordinates.lng);
-                const isSelected = selectedHotspot?.id === hotspot.id;
-                const markerSize = isSelected ? 16 : 12;
-                
-                return (
-                  <g 
-                    key={hotspot.id}
-                    className="cursor-pointer transition-all duration-200 hover:opacity-80"
-                    onClick={() => setSelectedHotspot(hotspot)}
-                  >
-                    {/* Pulse animation for critical hotspots */}
-                    {hotspot.severity === 'critical' && (
-                      <circle
-                        cx={x}
-                        cy={y}
-                        r={markerSize + 8}
-                        fill={getMarkerColor(hotspot.severity)}
-                        opacity="0.2"
-                        className="animate-ping"
-                      />
-                    )}
-                    
-                    {/* Marker circle */}
-                    <circle
-                      cx={x}
-                      cy={y}
-                      r={markerSize}
-                      fill={getMarkerColor(hotspot.severity)}
-                      stroke="white"
-                      strokeWidth="2"
-                      className="drop-shadow-lg"
-                    />
-                    
-                    {/* Inner dot */}
-                    <circle
-                      cx={x}
-                      cy={y}
-                      r={markerSize / 3}
-                      fill="white"
-                      opacity="0.8"
-                    />
-                    
-                    {/* Label */}
-                    {isSelected && (
-                      <g>
-                        <rect
-                          x={x - 60}
-                          y={y - 40}
-                          width="120"
-                          height="30"
-                          rx="4"
-                          fill="white"
-                          stroke={getMarkerColor(hotspot.severity)}
-                          strokeWidth="2"
-                          className="drop-shadow-xl"
-                        />
-                        <text
-                          x={x}
-                          y={y - 20}
-                          textAnchor="middle"
-                          className="text-xs font-semibold fill-slate-900"
-                        >
-                          {hotspot.location}
-                        </text>
-                      </g>
-                    )}
-                  </g>
-                );
-              })}
-            </svg>
-
-            {/* Legend */}
-            <div className="absolute bottom-4 left-4 bg-white dark:bg-slate-800 rounded-lg shadow-lg p-4 border">
-              <h4 className="text-sm font-semibold mb-3">Severity Levels</h4>
-              <div className="space-y-2">
-                {['critical', 'high', 'medium', 'low'].map((severity) => (
-                  <div key={severity} className="flex items-center gap-2">
-                    <div 
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: getMarkerColor(severity) }}
-                    />
-                    <span className="text-xs capitalize">{severity}</span>
-                  </div>
-                ))}
+          {/* Info panel overlay */}
+          {selectedHotspot && (
+            <div className="absolute top-4 right-4 w-80 bg-white dark:bg-slate-800 rounded-lg shadow-xl p-4 border z-[1000] animate-in fade-in slide-in-from-right-10 duration-300">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <h3 className="font-semibold text-lg">{selectedHotspot.location}</h3>
+                  <p className="text-sm text-muted-foreground">{selectedHotspot.ward} • {selectedHotspot.zone}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setSelectedHotspot(null)}
+                >
+                  ×
+                </Button>
               </div>
-            </div>
 
-            {/* Info panel */}
-            {selectedHotspot && (
-              <div className="absolute top-4 right-4 w-80 bg-white dark:bg-slate-800 rounded-lg shadow-xl p-4 border">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="font-semibold text-lg">{selectedHotspot.location}</h3>
-                    <p className="text-sm text-muted-foreground">{selectedHotspot.ward} • {selectedHotspot.zone}</p>
+              <div className={`inline-block px-2 py-1 rounded text-xs font-semibold mb-3 ${getSeverityColor(selectedHotspot.severity)}`}>
+                {selectedHotspot.severity.toUpperCase()}
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium flex items-center gap-1">
+                      <Droplets className="w-3 h-3" />
+                      Water Level
+                    </span>
+                    <span className="text-sm font-bold">{selectedHotspot.waterLevel}%</span>
                   </div>
-                  <Button 
-                    variant="ghost" 
-                    size="icon"
-                    onClick={() => setSelectedHotspot(null)}
-                  >
-                    ×
-                  </Button>
-                </div>
-                
-                <div className={`inline-block px-2 py-1 rounded text-xs font-semibold mb-3 ${getSeverityColor(selectedHotspot.severity)}`}>
-                  {selectedHotspot.severity.toUpperCase()}
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium flex items-center gap-1">
-                        <Droplets className="w-3 h-3" />
-                        Water Level
-                      </span>
-                      <span className="text-sm font-bold">{selectedHotspot.waterLevel}%</span>
-                    </div>
-                    <div className="h-2 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className={`h-full transition-all ${
-                          selectedHotspot.waterLevel > 70 ? 'bg-destructive' :
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all ${selectedHotspot.waterLevel > 70 ? 'bg-destructive' :
                           selectedHotspot.waterLevel > 50 ? 'bg-warning' : 'bg-info'
                         }`}
-                        style={{ width: `${selectedHotspot.waterLevel}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-muted-foreground">
-                    Updated {selectedHotspot.lastUpdated}
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <Button variant="outline" size="sm" className="flex-1">
-                      View Details
-                    </Button>
-                    <Button size="sm" className="flex-1">
-                      Get Directions
-                    </Button>
+                      style={{ width: `${selectedHotspot.waterLevel}%` }}
+                    />
                   </div>
                 </div>
-              </div>
-            )}
 
-            {/* Instructions */}
-            <div className="absolute top-4 left-4 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm rounded-lg shadow-lg px-3 py-2 text-xs text-muted-foreground">
-              Click markers to view details • Drag to pan • Use zoom controls
+                <div className="text-xs text-muted-foreground">
+                  Updated {selectedHotspot.lastUpdated}
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button variant="outline" size="sm" className="flex-1">
+                    View Details
+                  </Button>
+                  <Button size="sm" className="flex-1">
+                    Get Directions
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Legend */}
+          <div className="absolute bottom-4 left-4 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm rounded-lg shadow-lg p-3 border z-[1000]">
+            <h4 className="text-xs font-semibold mb-2">Severity Levels</h4>
+            <div className="space-y-1.5">
+              {['critical', 'high', 'medium', 'low'].map((severity) => (
+                <div key={severity} className="flex items-center gap-2">
+                  <div
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: getMarkerColor(severity) }}
+                  />
+                  <span className="text-xs capitalize">{severity}</span>
+                </div>
+              ))}
             </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* Grid view of hotspots */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {filteredHotspots.map((hotspot) => (
           <Card key={hotspot.id} className="group hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
@@ -459,10 +396,9 @@ const HotspotMap = () => {
                   </div>
                   <div className="h-2 bg-muted rounded-full overflow-hidden">
                     <div
-                      className={`h-full transition-all duration-500 ${
-                        hotspot.waterLevel > 70 ? 'bg-destructive' :
-                        hotspot.waterLevel > 50 ? 'bg-warning' : 'bg-info'
-                      }`}
+                      className={`h-full transition-all duration-500 ${hotspot.waterLevel > 70 ? 'bg-destructive' :
+                          hotspot.waterLevel > 50 ? 'bg-warning' : 'bg-info'
+                        }`}
                       style={{ width: `${hotspot.waterLevel}%` }}
                     />
                   </div>
